@@ -218,6 +218,11 @@ def add_task():
         "SELECT * FROM users WHERE id=?",
         (session["user_id"],)
     ).fetchone()
+    if user is None:
+        flash("Session expired. Please login again.", "danger")
+        conn.close()
+        session.clear()
+        return redirect("/login")
 
     # ---- IMMEDIATE CREATION EMAIL ----
     send_email(
