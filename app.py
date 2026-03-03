@@ -1,45 +1,37 @@
 from flask import Flask, render_template, request, redirect, session, flash
-import sqlite3
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
-from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timedelta
+from apscheduler.schedulers.background import BackgroundScheduler
+import psycopg2
+import os
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 
-# ================= EMAIL CONFIG =================
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 587
-app.config['MAIL_USE_TLS'] = True
-app.config['MAIL_USERNAME'] = 'praveenreddie31@gmail.com'  # <-- CHANGE THIS
-app.config['MAIL_PASSWORD'] = 'osetjedgugvckxrb'  # <-- CHANGE THIS
-app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME']
+# ================= DATABASE CONFIG =================
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-mail = Mail(app)
-
-# ================= DATABASE =================
 def get_db():
-    conn = sqlite3.connect("database.db")
-    conn.row_factory = sqlite3.Row
-    return conn
+    return psycopg2.connect(DATABASE_URL)
 
 def create_tables():
     conn = get_db()
+    cur = conn.cursor()
 
-    conn.execute("""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         username TEXT UNIQUE,
         email TEXT UNIQUE,
         password TEXT
-    )
+    );
     """)
 
-    conn.execute("""
+    cur.execute("""
     CREATE TABLE IF NOT EXISTS tasks(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
         task TEXT,
         status TEXT,
         due_datetime TEXT,
@@ -47,83 +39,102 @@ def create_tables():
         created_mail_sent INTEGER DEFAULT 0,
         one_hour_mail_sent INTEGER DEFAULT 0,
         five_min_mail_sent INTEGER DEFAULT 0
-    )
+    );
     """)
 
     conn.commit()
+    cur.close()
     conn.close()
 
 create_tables()
 
-# ================= EMAIL FUNCTION =================
-import os
+# ================= EMAIL CONFIG =================
+app.config['MAIL_SERVER'] = 'smtp.gmail.com'
+app.config['MAIL_PORT'] = 587
+app.config['MAIL_USE_TLS'] = True
+app.config['MAIL_USERNAME'] = os.environ.get("MAIL_USERNAME")
+app.config['MAIL_PASSWORD'] = os.environ.get("MAIL_PASSWORD")
+app.config['MAIL_DEFAULT_SENDER'] = app.config['MAIL_USERNAME']
+
+mail = Mail(app)
 
 def send_email(user_email, subject, body):
-    # Skip email sending in Render production
-    if os.environ.get("RENDER") == "true":
-        print("Skipping email in production (SMTP blocked).")
-        return
-
     try:
+        # Skip email in Render free tier if needed
+        if os.environ.get("RENDER"):
+            print("Production environment detected. Skipping SMTP.")
+            return
+
         msg = Message(subject, recipients=[user_email])
         msg.body = body
         mail.send(msg)
-        print("Email sent:", subject)
-    except Exception as e:
-        print("Email failed but app continues:", e)
+        print("Email sent successfully")
 
-# ================= REMINDER CHECKER =================
+    except Exception as e:
+        print("Email error but app continues:", e)
+
+# ================= REMINDER SYSTEM =================
 def check_reminders():
     conn = get_db()
-    tasks = conn.execute("SELECT * FROM tasks WHERE status='Pending'").fetchall()
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM tasks WHERE status='Pending'")
+    tasks = cur.fetchall()
+
     now = datetime.now()
 
     for task in tasks:
-        due_time = datetime.strptime(task["due_datetime"], "%Y-%m-%d %H:%M")
+        task_id = task[0]
+        user_id = task[1]
+        task_name = task[2]
+        due_datetime = task[4]
+        one_hour_sent = task[6]
+        five_min_sent = task[7]
+
+        due_time = datetime.strptime(due_datetime, "%Y-%m-%d %H:%M")
         time_diff = due_time - now
 
-        user = conn.execute(
-            "SELECT * FROM users WHERE id=?",
-            (task["user_id"],)
-        ).fetchone()
+        cur.execute("SELECT email, username FROM users WHERE id=%s", (user_id,))
+        user = cur.fetchone()
 
-        # ---- 1 HOUR REMINDER ----
+        if not user:
+            continue
+
+        email = user[0]
+        username = user[1]
+
+        # 1 Hour Reminder
         if timedelta(minutes=5) < time_diff <= timedelta(hours=1):
-            if task["one_hour_mail_sent"] == 0:
+            if one_hour_sent == 0:
                 send_email(
-                    user["email"],
-                    "Reminder: 1 Hour Left",
-                    f"Hello {user['username']},\n\n"
-                    f"Your task '{task['task']}' is due at {task['due_datetime']}.\n"
-                    f"Only 1 hour remaining."
+                    email,
+                    "1 Hour Reminder",
+                    f"Hello {username}, your task '{task_name}' is due at {due_datetime}"
                 )
-                conn.execute(
-                    "UPDATE tasks SET one_hour_mail_sent=1 WHERE id=?",
-                    (task["id"],)
+                cur.execute(
+                    "UPDATE tasks SET one_hour_mail_sent=1 WHERE id=%s",
+                    (task_id,)
                 )
                 conn.commit()
 
-        # ---- 5 MINUTE REMINDER ----
+        # 5 Minute Reminder
         if timedelta(seconds=0) < time_diff <= timedelta(minutes=5):
-            if task["five_min_mail_sent"] == 0:
+            if five_min_sent == 0:
                 send_email(
-                    user["email"],
-                    "Reminder: 5 Minutes Left",
-                    f"Hello {user['username']},\n\n"
-                    f"Your task '{task['task']}' is due at {task['due_datetime']}.\n"
-                    f"Only 5 minutes remaining."
+                    email,
+                    "5 Minute Reminder",
+                    f"Hello {username}, your task '{task_name}' is due at {due_datetime}"
                 )
-                conn.execute(
-                    "UPDATE tasks SET five_min_mail_sent=1 WHERE id=?",
-                    (task["id"],)
+                cur.execute(
+                    "UPDATE tasks SET five_min_mail_sent=1 WHERE id=%s",
+                    (task_id,)
                 )
                 conn.commit()
 
+    cur.close()
     conn.close()
 
-import os
-
-if os.environ.get("RENDER") is None:
+if not os.environ.get("RENDER"):
     scheduler = BackgroundScheduler()
     scheduler.add_job(func=check_reminders, trigger="interval", minutes=1)
     scheduler.start()
@@ -134,7 +145,6 @@ if os.environ.get("RENDER") is None:
 def home():
     return redirect("/login")
 
-# REGISTER
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
@@ -143,9 +153,10 @@ def register():
         password = generate_password_hash(request.form["password"])
 
         conn = get_db()
+        cur = conn.cursor()
         try:
-            conn.execute(
-                "INSERT INTO users (username,email,password) VALUES (?,?,?)",
+            cur.execute(
+                "INSERT INTO users (username,email,password) VALUES (%s,%s,%s)",
                 (username, email, password)
             )
             conn.commit()
@@ -154,11 +165,11 @@ def register():
         except:
             flash("Username or Email already exists!", "danger")
         finally:
+            cur.close()
             conn.close()
 
     return render_template("register.html")
 
-# LOGIN
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -166,39 +177,43 @@ def login():
         password = request.form["password"]
 
         conn = get_db()
-        user = conn.execute(
-            "SELECT * FROM users WHERE username=?",
-            (username,)
-        ).fetchone()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
+        user = cur.fetchone()
+        cur.close()
         conn.close()
 
-        if user and check_password_hash(user["password"], password):
-            session["user_id"] = user["id"]
-            session["username"] = user["username"]
+        if user and check_password_hash(user[3], password):
+            session["user_id"] = user[0]
+            session["username"] = user[1]
             return redirect("/dashboard")
         else:
             flash("Invalid credentials!", "danger")
 
     return render_template("login.html")
 
-# DASHBOARD
 @app.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
         return redirect("/login")
 
     conn = get_db()
-    tasks = conn.execute(
-        "SELECT * FROM tasks WHERE user_id=?",
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM tasks WHERE user_id=%s ORDER BY id DESC",
         (session["user_id"],)
-    ).fetchall()
+    )
+    tasks = cur.fetchall()
+    cur.close()
     conn.close()
 
     return render_template("dashboard.html", tasks=tasks)
 
-# ADD TASK
 @app.route("/add_task", methods=["POST"])
 def add_task():
+    if "user_id" not in session:
+        return redirect("/login")
+
     task = request.form["task"]
     due_date = request.form["due_date"]
     due_time = request.form["due_time"]
@@ -207,62 +222,53 @@ def add_task():
     due_datetime = f"{due_date} {due_time}"
 
     conn = get_db()
-    cursor = conn.execute("""
+    cur = conn.cursor()
+
+    cur.execute("""
         INSERT INTO tasks (user_id,task,status,due_datetime,priority)
-        VALUES (?,?,?,?,?)
+        VALUES (%s,%s,%s,%s,%s)
     """, (session["user_id"], task, "Pending", due_datetime, priority))
 
-    task_id = cursor.lastrowid
-
-    user = conn.execute(
-        "SELECT * FROM users WHERE id=?",
-        (session["user_id"],)
-    ).fetchone()
-    if user is None:
-        flash("Session expired. Please login again.", "danger")
-        conn.close()
-        session.clear()
-        return redirect("/login")
-
-    # ---- IMMEDIATE CREATION EMAIL ----
-    send_email(
-        user["email"],
-        "Task Created Successfully",
-        f"Hello {user['username']},\n\n"
-        f"Your task '{task}' has been created.\n"
-        f"Due at: {due_datetime}"
-    )
-
-    conn.execute(
-        "UPDATE tasks SET created_mail_sent=1 WHERE id=?",
-        (task_id,)
-    )
-
     conn.commit()
+
+    # Send immediate email
+    cur.execute("SELECT email, username FROM users WHERE id=%s",
+                (session["user_id"],))
+    user = cur.fetchone()
+
+    if user:
+        send_email(
+            user[0],
+            "Task Created",
+            f"Hello {user[1]}, your task '{task}' is created. Due at {due_datetime}"
+        )
+
+    cur.close()
     conn.close()
 
     flash("Task added!", "success")
     return redirect("/dashboard")
 
-# COMPLETE
 @app.route("/complete/<int:id>")
 def complete(id):
     conn = get_db()
-    conn.execute("UPDATE tasks SET status='Completed' WHERE id=?", (id,))
+    cur = conn.cursor()
+    cur.execute("UPDATE tasks SET status='Completed' WHERE id=%s", (id,))
     conn.commit()
+    cur.close()
     conn.close()
     return redirect("/dashboard")
 
-# DELETE
 @app.route("/delete/<int:id>")
 def delete(id):
     conn = get_db()
-    conn.execute("DELETE FROM tasks WHERE id=?", (id,))
+    cur = conn.cursor()
+    cur.execute("DELETE FROM tasks WHERE id=%s", (id,))
     conn.commit()
+    cur.close()
     conn.close()
     return redirect("/dashboard")
 
-# LOGOUT
 @app.route("/logout")
 def logout():
     session.clear()
