@@ -114,9 +114,12 @@ def check_reminders():
 
     conn.close()
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=check_reminders, trigger="interval", minutes=1)
-scheduler.start()
+import os
+
+if os.environ.get("RENDER") is None:
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=check_reminders, trigger="interval", minutes=1)
+    scheduler.start()
 
 # ================= ROUTES =================
 
