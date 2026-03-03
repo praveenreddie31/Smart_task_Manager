@@ -56,14 +56,21 @@ def create_tables():
 create_tables()
 
 # ================= EMAIL FUNCTION =================
+import os
+
 def send_email(user_email, subject, body):
+    # Skip email sending in Render production
+    if os.environ.get("RENDER") == "true":
+        print("Skipping email in production (SMTP blocked).")
+        return
+
     try:
         msg = Message(subject, recipients=[user_email])
         msg.body = body
         mail.send(msg)
         print("Email sent:", subject)
     except Exception as e:
-        print("Email error:", e)
+        print("Email failed but app continues:", e)
 
 # ================= REMINDER CHECKER =================
 def check_reminders():
