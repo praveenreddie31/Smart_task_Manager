@@ -1,0 +1,12 @@
+body {
+    font-family: Arial;
+    text-align: center;
+}
+
+form {
+    margin: 10px;
+}
+
+button {
+    padding: 5px;
+}

@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h3 class="mb-4">Welcome {{ session.username }}</h3>
+
+<!-- ================= ADD TASK SECTION ================= -->
+<div class="card shadow mb-4">
+    <div class="card-body">
+        <h5 class="mb-3">Add New Task</h5>
+
+        <form method="POST" action="/add_task" class="row g-2">
+
+            <div class="col-md-3">
+                <input class="form-control"
+                       type="text"
+                       name="task"
+                       placeholder="Task title"
+                       required>
+            </div>
+
+            <div class="col-md-2">
+                <input class="form-control"
+                       type="date"
+                       name="due_date"
+                       required>
+            </div>
+
+            <div class="col-md-2">
+                <input class="form-control"
+                       type="time"
+                       name="due_time"
+                       required>
+            </div>
+
+            <div class="col-md-2">
+                <select class="form-select"
+                        name="priority"
+                        required>
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                </select>
+            </div>
+
+            <div class="col-md-2">
+                <button class="btn btn-success w-100">
+                    Add Task
+                </button>
+            </div>
+
+        </form>
+    </div>
+</div>
+
+
+<!-- ================= TASK LIST ================= -->
+{% if tasks %}
+    {% for task in tasks %}
+
+        <div class="card shadow-sm mb-3">
+            <div class="card-body">
+
+                <h5>{{ task.task }}</h5>
+
+                <p class="mb-2">
+                    <strong>Due:</strong> {{ task.due_datetime }}
+                </p>
+
+                <p>
+                    <strong>Priority:</strong>
+                    <span class="badge 
+                        {% if task.priority == 'High' %}bg-danger
+                        {% elif task.priority == 'Medium' %}bg-primary
+                        {% else %}bg-secondary
+                        {% endif %}">
+                        {{ task.priority }}
+                    </span>
+
+                    &nbsp; | &nbsp;
+
+                    <strong>Status:</strong>
+                    <span class="badge 
+                        {% if task.status == 'Completed' %}bg-success
+                        {% else %}bg-warning text-dark
+                        {% endif %}">
+                        {{ task.status }}
+                    </span>
+                </p>
+
+                <div class="mt-2">
+                    <a href="/complete/{{ task.id }}"
+                       class="btn btn-success btn-sm">
+                        Complete
+                    </a>
+
+                    <a href="/delete/{{ task.id }}"
+                       class="btn btn-danger btn-sm">
+                        Delete
+                    </a>
+                </div>
+
+            </div>
+        </div>
+
+    {% endfor %}
+{% else %}
+    <div class="alert alert-info">
+        No tasks yet. Add one above!
+    </div>
+{% endif %}
+
+{% endblock %}
