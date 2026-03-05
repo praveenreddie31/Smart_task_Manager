@@ -3,7 +3,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_mail import Mail, Message
 from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
-import psycopg2
+import psycopg
 import os
 
 app = Flask(__name__)
@@ -13,7 +13,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "supersecretkey")
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg.connect(DATABASE_URL)
 
 def create_tables():
     conn = get_db()
